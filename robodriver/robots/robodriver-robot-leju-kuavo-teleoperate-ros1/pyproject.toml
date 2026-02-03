@@ -3,23 +3,23 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "robodriver_robot_galaxealite_aio_ros2"
+name = "robodriver_robot_leju_kuavo_teleop_ros1"
 version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.8"
 license = "Apache-2.0"
 authors = [
-    {name = "You Liu", email = "liuyou@baai.ac.cn"},
+    {name = "Hanyu Feng", email = "dearronfeng0520@163.com"},
 ]
-keywords = ["robotics", "lerobot", "galaxea"]
+keywords = ["robotics", "lerobot", "LEJU"]
 dependencies = [
-    "dora-rs-cli",
+
     "logging_mp",
     "opencv-python",
 ]
 
 [tool.setuptools.packages.find]
 include = [
-    "robodriver_robot_galaxealite_aio_ros2",
-    "lerobot_robot_galaxealite_aio_ros2"
+    "lerobot_robot_leju_kuavo_teleop_ros1",
+    "robodriver_robot_leju_kuavo_teleop_ros1"
 ]

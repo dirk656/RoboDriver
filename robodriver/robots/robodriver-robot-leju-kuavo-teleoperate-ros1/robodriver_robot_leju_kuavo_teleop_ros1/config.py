@@ -9,7 +9,7 @@ from lerobot.motors import Motor, MotorNormMode
 
 @RobotConfig.register_subclass("leju-kuavo-teleop-ros2")
 @dataclass
-class LEJUKuavoRos2Config(RobotConfig):
+class LEJUKuavoRos1Config(RobotConfig):
     use_degrees = True
     norm_mode_body = (
         MotorNormMode.DEGREES if use_degrees else MotorNormMode.RANGE_M100_100
@@ -108,18 +108,18 @@ class LEJUKuavoRos2Config(RobotConfig):
                 width=1280,
                 height=720,
             ),
-            #"image_wrist_left": OpenCVCameraConfig(
-             #   index_or_path=,
-              #  fps=30,
-               # width=640,
-                #height=360,
-            #),
-            #"image_wrist_right": OpenCVCameraConfig(
-            #    index_or_path=4,
-               # fps=30,
-              #  width=640,
-                #height=360,
-            #),
+            "image_wrist_left": OpenCVCameraConfig(
+                index_or_path=2,
+                fps=30,
+                width=640,
+                height=360,
+            ),
+            "image_wrist_right": OpenCVCameraConfig(
+                index_or_path=4,
+                fps=30,
+                width=640,
+                height=360,
+            ),
         }
     )
 

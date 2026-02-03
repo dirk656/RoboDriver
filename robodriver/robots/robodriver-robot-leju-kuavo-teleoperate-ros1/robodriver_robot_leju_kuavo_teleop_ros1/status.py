@@ -68,28 +68,20 @@ class RobotStatus(draccus.ChoiceRegistry, abc.ABC):
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False)
 
-RobotStatus.register_subclass("galaxealite-follower-ros1")
+RobotStatus.register_subclass("leju-kuavo-teleop-ros1")
 @dataclass
-class GALAXEALITEFollowerRos1RobotStatus(RobotStatus):
-    device_name: str = "星海图R1-Lite"
-    device_body: str = "星海图"
+class LEJUKuavoRos1RobotStatus(RobotStatus):
+    device_name: str = "乐聚kuavoPro4"
+    device_body: str = "乐聚"
 
     def __post_init__(self):
-        self.specifications.end_type = "二指夹爪"
+        self.specifications.end_type = "灵巧手"
         self.specifications.fps = 30
         self.specifications.camera = CameraStatus(
             information=[
                 CameraInfo(
-                    name="image_top_left",
-                    chinese_name="头部左摄像头",
-                    type="纯双目视觉相机",
-                    width=1280,
-                    height=720,
-                    is_connect=False
-                ),
-                CameraInfo(
-                    name="image_top_right",
-                    chinese_name="头部右摄像头",
+                    name="image_top",
+                    chinese_name="头部摄像头",
                     type="纯双目视觉相机",
                     width=1280,
                     height=720,
@@ -117,16 +109,16 @@ class GALAXEALITEFollowerRos1RobotStatus(RobotStatus):
         self.specifications.arm = ArmStatus(
             information=[
                 ArmInfo(
-                    name="piper_left",
-                    type="Galaxea A1X + Galaxea G1 - 7DOF",
+                    name="kuavo_left",
+                    type="7DOF",
                     start_pose=[],
                     joint_p_limit=[165.0,180.0,0.0,90.0,90.0,165.0],
                     joint_n_limit=[-165.0,0.0,-190.0,-90.0,-90.0,-165.0],
                     is_connect=False
                     ),
                 ArmInfo(
-                    name="piper_right",
-                    type="Galaxea A1X + Galaxea G1 - 7DOF",
+                    name="kuavo_right",
+                    type="7DOF",
                     start_pose=[],
                     joint_p_limit=[165.0,180.0,0.0,90.0,90.0,165.0],
                     joint_n_limit=[-165.0,0.0,-190.0,-90.0,-90.0,-165.0],
