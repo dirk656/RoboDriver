@@ -239,20 +239,25 @@ python -m robodriver.scripts.run  --robot.type=leju-kuavo-teleoperate-ros1
    ```
 
 4. **机器人响应超时**  
+
    检查主机与 leju 主控的网络连通性、RoboDriver 启动脚本参数是否正确。
 
 5. **VR无法控制机器人**
+
    检查 VR，上下位机是否在同一wifi网络下
 
 6. **无法查看ros话题或无法连接到ros主机**
+
    检查 ROS Master URI 和 Hostname 配置 
 
 7. **关节订阅连接超时**
+
    确认此终端中已经 source 了自定义消息类型的 ROS 工作空间，若没有执行则执行：
     ```bash
     source ~/kuavo-ros-opensource/devel/setup.bash
     ```
 8. **rostopic数据异常**
+
    在rostopic存在一条消息为sensors_data_raw,如果使用`rostopic echo /sensors_data_raw`命令查看数据时发现数据异常或者没有数据显示，则是kuavo_msgs版本的问题，分别在下位机和主机上执行以下命令检查md5版本
    ```bash
    rostopic type /sensors_data_raw | rosmsg md5
@@ -260,6 +265,7 @@ python -m robodriver.scripts.run  --robot.type=leju-kuavo-teleoperate-ros1
    两者的输出应该一样，如果md5编码不同则重新执行上面的步骤将机器人内的版本同步到主机上
 
 9. **catkin build编译报错**
+
 确保在编译时关闭conda环境，在本机环境中，使用命令：
 ```bash
 conda deactivate
