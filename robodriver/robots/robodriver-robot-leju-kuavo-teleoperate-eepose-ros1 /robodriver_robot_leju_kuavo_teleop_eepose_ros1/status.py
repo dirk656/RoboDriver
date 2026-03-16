@@ -70,7 +70,7 @@ class RobotStatus(draccus.ChoiceRegistry, abc.ABC):
 
 RobotStatus.register_subclass("leju-kuavo-teleop-ros1")
 @dataclass
-class LEJUKuavoRos1RobotStatus(RobotStatus):
+class LEJUKuavoEEPOSERos1RobotStatus(RobotStatus):
     device_name: str = "乐聚kuavoPro4"
     device_body: str = "乐聚"
 

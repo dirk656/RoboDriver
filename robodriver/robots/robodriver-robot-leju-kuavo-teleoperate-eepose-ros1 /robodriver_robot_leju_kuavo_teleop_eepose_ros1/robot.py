@@ -12,19 +12,19 @@ from functools import cached_property
 import rospy  # 替换rclpy为rospy
 
 # 导入ROS1版本的配置、状态和节点（与你提供的ROS1节点文件对应）
-from .config import LEJUKuavoRos1Config  # 改为ROS1配置类
-from .status import LEJUKuavoRos1RobotStatus  # 改为ROS1状态类（需确保status.py已适配ROS1）
-from .node import LEJUKuavoRos1Node, ros_spin_thread  # 导入ROS1节点和spin函数
+from .config import LEJUKuavoEEPOSERos1Config  # 改为ROS1配置类
+from .status import LEJUKuavoEEPOSERos1RobotStatus  # 改为ROS1状态类（需确保status.py已适配ROS1）
+from .node import LEJUKuavoEEPOSERos1Node, ros_spin_thread  # 导入ROS1节点和spin函数
 
 
 logger = logging_mp.get_logger(__name__)
 
 
-class LEJUKuavoRos1Robot(Robot):  # 类名改为ROS1标识
-    config_class = LEJUKuavoRos1Config  # 关联ROS1配置类
-    name = "leju-kuavo-teleop-ros1"  # 名称改为ROS1版本标识
+class LEJUKuavoEEPOSERos1Robot(Robot):  # 类名改为ROS1标识
+    config_class = LEJUKuavoEEPOSERos1Config  # 关联ROS1配置类
+    name = "leju-kuavo-teleop-eepose-ros1"  # 名称改为ROS1版本标识
 
-    def __init__(self, config: LEJUKuavoRos1Config):
+    def __init__(self, config: LEJUKuavoEEPOSERos1Config):
         super().__init__(config)
         #init
         self.config = config
@@ -37,7 +37,7 @@ class LEJUKuavoRos1Robot(Robot):  # 类名改为ROS1标识
         
         self.connect_excluded_cameras = ["image_pika_pose"]
 
-        self.status = LEJUKuavoRos1RobotStatus()
+        self.status = LEJUKuavoEEPOSERos1RobotStatus()
         if not rospy.core.is_initialized():
             rospy.init_node('ros1_recv_pub_driver', anonymous=True)
             logger.info(f"✅ 初始化ROS节点：{rospy.get_name()}")
@@ -46,7 +46,7 @@ class LEJUKuavoRos1Robot(Robot):  # 类名改为ROS1标识
         
         logger.info(f"✅ ROS节点状态：is_shutdown={rospy.is_shutdown()}")
         
-        self.robot_ros1_node = LEJUKuavoRos1Node()  # 创建ROS1节点实例（替换ROS2节点）
+        self.robot_ros1_node = LEJUKuavoEEPOSERos1Node()  # 创建ROS1节点实例（替换ROS2节点）
         logger.info("✅ ROS1节点实例创建成功")
         
         self.ros_spin_thread = threading.Thread(

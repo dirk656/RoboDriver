@@ -6,7 +6,9 @@ from lerobot.cameras import CameraConfig
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.motors import Motor, MotorNormMode
 
-
+@dataclass
+class Actuator:
+    id: int
 @RobotConfig.register_subclass("leju-kuavo-teleop-eepose-ros1")
 @dataclass
 class LEJUKuavoEEPOSERos1Config(RobotConfig):

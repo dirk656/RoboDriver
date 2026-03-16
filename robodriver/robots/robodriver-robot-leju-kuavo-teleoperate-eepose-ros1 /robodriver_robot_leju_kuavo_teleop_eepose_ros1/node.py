@@ -8,17 +8,25 @@ import numpy as np
 import cv2
 import rospy
 from sensor_msgs.msg import JointState, Image
+from std_msgs.msg import Float32MultiArray
 from message_filters import Subscriber, ApproximateTimeSynchronizer
 
 try:
     # 优先使用ROS原生消息包，确保与rostopic type一致（kuavo_msgs/*）
     from kuavo_msgs.msg import robotHandPosition, robotHeadMotionData, sensorsData
-    from kuavo_humanoid_sdk.msg.kuavo_msgs.msg import twoArmHandPose , twoArmHandPoseCmd
 
 except Exception:
     # 兼容旧SDK导入路径
     from kuavo_humanoid_sdk.msg.kuavo_msgs.msg import robotHandPosition, robotHeadMotionData, sensorsData
-    from kuavo_humanoid_sdk.msg.kuavo_msgs.msg import twoArmHandPose , twoArmHandPoseCmd
+
+try:
+    # IK官方接口优先使用 motion_capture_ik 包
+    from motion_capture_ik.msg import twoArmHandPose, twoArmHandPoseCmd
+except Exception:
+    try:
+        from kuavo_msgs.msg import twoArmHandPose, twoArmHandPoseCmd
+    except Exception:
+        from kuavo_humanoid_sdk.msg.kuavo_msgs.msg import twoArmHandPose, twoArmHandPoseCmd
 
 
 
@@ -55,6 +63,16 @@ class LEJUKuavoEEPOSERos1Node:
         
         rospy.loginfo(f"创建发布者: /control_robot_hand_position (队列大小: {self.queue_size})")
         self.publisher_hand_eepose = rospy.Publisher('/control_robot_hand_position', robotHandPosition, queue_size=self.queue_size)
+
+        # IK求解结果订阅（用于回读末端位姿）
+        rospy.loginfo(f"创建订阅者: /ik/result (队列大小: {self.queue_size})")
+        self.ik_result_sub = rospy.Subscriber('/ik/result', twoArmHandPose, self.ik_result_callback, queue_size=self.queue_size)
+
+        rospy.loginfo("创建订阅者: /ik/debug/time_cost")
+        self.ik_time_cost_sub = rospy.Subscriber('/ik/debug/time_cost', Float32MultiArray, self.ik_time_cost_callback, queue_size=10)
+
+        rospy.loginfo("创建订阅者: /kuavo_arm_traj")
+        self.ik_joint_traj_sub = rospy.Subscriber('/kuavo_arm_traj', JointState, self.ik_joint_traj_callback, queue_size=self.queue_size)
         
         self.last_main_send_time_ns = 0
         self.last_follow_send_time_ns = 0
@@ -68,6 +86,10 @@ class LEJUKuavoEEPOSERos1Node:
         self.latest_hand_msg = None
         self.body_msg_count = 0
         self.hand_msg_count = 0
+        self.ik_result_count = 0
+        self._ik_result_received = False
+        self.last_ik_loop_ms = None
+        self.last_ik_solve_ms = None
         self._warned_headerless_follow = False
         self._warned_headerless_image = False
 
@@ -95,6 +117,84 @@ class LEJUKuavoEEPOSERos1Node:
             return
 
         raise AttributeError(f"twoArmHandPose字段不匹配: {list(getattr(pose_msg, '__slots__', []))}")
+
+    def _extract_two_arm_pose_msg(self, pose_msg):
+        if hasattr(pose_msg, "left_hand_pose") and hasattr(pose_msg, "right_hand_pose"):
+            return pose_msg.left_hand_pose, pose_msg.right_hand_pose
+        if hasattr(pose_msg, "left") and hasattr(pose_msg, "right"):
+            return pose_msg.left, pose_msg.right
+        raise AttributeError(f"twoArmHandPose字段不匹配: {list(getattr(pose_msg, '__slots__', []))}")
+
+    def _extract_single_hand_pose(self, pose_obj):
+        pos = np.array(list(getattr(pose_obj, "pos_xyz", [0.0, 0.0, 0.0]))[:3], dtype=np.float32)
+        quat = np.array(list(getattr(pose_obj, "quat_xyzw", [0.0, 0.0, 0.0, 1.0]))[:4], dtype=np.float32)
+        elbow = np.array(list(getattr(pose_obj, "elbow_pos_xyz", [0.0, 0.0, 0.0]))[:3], dtype=np.float32)
+        joints = np.array(list(getattr(pose_obj, "joint_angles", [0.0] * 7))[:7], dtype=np.float32)
+        if pos.shape[0] < 3:
+            pos = np.pad(pos, (0, 3 - pos.shape[0]))
+        if quat.shape[0] < 4:
+            quat = np.pad(quat, (0, 4 - quat.shape[0]))
+            quat[3] = 1.0
+        if elbow.shape[0] < 3:
+            elbow = np.pad(elbow, (0, 3 - elbow.shape[0]))
+        if joints.shape[0] < 7:
+            joints = np.pad(joints, (0, 7 - joints.shape[0]))
+        return pos, quat, elbow, joints
+
+    def ik_result_callback(self, msg):
+        try:
+            self.ik_result_count += 1
+            if self.ik_result_count == 1:
+                rospy.loginfo("首次收到 /ik/result")
+
+            left_pose, right_pose = self._extract_two_arm_pose_msg(msg)
+            l_pos, l_quat, l_elbow, l_joints = self._extract_single_hand_pose(left_pose)
+            r_pos, r_quat, r_elbow, r_joints = self._extract_single_hand_pose(right_pose)
+
+            left_eepose = np.concatenate([l_pos, l_quat]).astype(np.float32)
+            right_eepose = np.concatenate([r_pos, r_quat]).astype(np.float32)
+
+            with self.lock:
+                # EEPose链路: left_arm/right_arm 保存 [x,y,z,qx,qy,qz,qw]
+                self.recv_follower['left_arm'] = left_eepose
+                self.recv_follower['right_arm'] = right_eepose
+                self.recv_follower['left_elbow'] = l_elbow
+                self.recv_follower['right_elbow'] = r_elbow
+                self.recv_follower['left_arm_joint'] = l_joints
+                self.recv_follower['right_arm_joint'] = r_joints
+
+                self.recv_follower_status['left_arm'] = CONNECT_TIMEOUT_FRAME
+                self.recv_follower_status['right_arm'] = CONNECT_TIMEOUT_FRAME
+                self.recv_follower_status['left_elbow'] = CONNECT_TIMEOUT_FRAME
+                self.recv_follower_status['right_elbow'] = CONNECT_TIMEOUT_FRAME
+                self.recv_follower_status['left_arm_joint'] = CONNECT_TIMEOUT_FRAME
+                self.recv_follower_status['right_arm_joint'] = CONNECT_TIMEOUT_FRAME
+
+                self._ik_result_received = True
+        except Exception as e:
+            rospy.logwarn(f"ik_result_callback error: {e}")
+
+    def ik_time_cost_callback(self, msg):
+        try:
+            data = list(getattr(msg, "data", []))
+            if len(data) >= 2:
+                self.last_ik_loop_ms = float(data[0])
+                self.last_ik_solve_ms = float(data[1])
+                rospy.logdebug_throttle(2.0, f"IK耗时: loop={self.last_ik_loop_ms:.2f}ms, solve={self.last_ik_solve_ms:.2f}ms")
+        except Exception as e:
+            rospy.logwarn(f"ik_time_cost_callback error: {e}")
+
+    def ik_joint_traj_callback(self, msg):
+        try:
+            pos = np.array(list(getattr(msg, "position", [])), dtype=np.float32)
+            if pos.shape[0] >= 14:
+                with self.lock:
+                    self.recv_follower['left_arm_joint_traj'] = pos[0:7]
+                    self.recv_follower['right_arm_joint_traj'] = pos[7:14]
+                    self.recv_follower_status['left_arm_joint_traj'] = CONNECT_TIMEOUT_FRAME
+                    self.recv_follower_status['right_arm_joint_traj'] = CONNECT_TIMEOUT_FRAME
+        except Exception as e:
+            rospy.logwarn(f"ik_joint_traj_callback error: {e}")
 
     def _init_message_follow_filters(self):
         sub_body = Subscriber('/sensors_data_raw', sensorsData)
@@ -146,11 +246,14 @@ class LEJUKuavoEEPOSERos1Node:
                 head = np.zeros(2, dtype=np.float32)
 
             with self.lock:
-                self.recv_follower['right_arm'] = right_arm
-                self.recv_follower['left_arm'] = left_arm
+                # 未收到IK结果前，使用关节角作为占位；收到后不再覆盖EEPose
+                if not self._ik_result_received:
+                    self.recv_follower['right_arm'] = right_arm
+                    self.recv_follower['left_arm'] = left_arm
                 self.recv_follower['head'] = head
-                self.recv_follower_status['right_arm'] = CONNECT_TIMEOUT_FRAME
-                self.recv_follower_status['left_arm'] = CONNECT_TIMEOUT_FRAME
+                if not self._ik_result_received:
+                    self.recv_follower_status['right_arm'] = CONNECT_TIMEOUT_FRAME
+                    self.recv_follower_status['left_arm'] = CONNECT_TIMEOUT_FRAME
                 self.recv_follower_status['head'] = CONNECT_TIMEOUT_FRAME
         except Exception as e:
             rospy.logwarn(f"_process_body_msg error: {e}")
@@ -386,11 +489,6 @@ class LEJUKuavoEEPOSERos1Node:
                 right_arm_pose = [normalize_precision(v) for v in array[7:14]]
                 left_dexhand = to_uint_list(array[14:20])
                 right_dexhand = to_uint_list(array[20:26])
-            elif len(array) >= 14:
-                left_arm_pose = [normalize_precision(v) for v in array[0:7]]
-                right_arm_pose = [normalize_precision(v) for v in array[7:14]]
-                left_dexhand = [0, 0, 0, 0, 0, 0]
-                right_dexhand = [0, 0, 0, 0, 0, 0]
             else:
                 raise ValueError(f"Action vector too short: {len(array)}")
 
@@ -418,13 +516,13 @@ class LEJUKuavoEEPOSERos1Node:
             else:
                 raise AttributeError(f"twoArmHandPoseCmd字段不匹配: {list(getattr(ik_cmd, '__slots__', []))}")
 
-            self.ik_cmd_pub.publish(ik_cmd)
+            self.publisher_arm_eepose.publish(ik_cmd)
 
             # --- 手部控制 ---
             hand_msg = robotHandPosition()
             hand_msg.left_hand_position = left_dexhand    # 6维 [0~100]
             hand_msg.right_hand_position = right_dexhand  # 6维 [0~100]
-            self.hand_pub.publish(hand_msg)
+            self.publisher_hand_eepose.publish(hand_msg)
 
         except Exception as e:
             rospy.logerr(f"Error during replay at frame: {e}")
