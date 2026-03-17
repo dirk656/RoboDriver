@@ -33,6 +33,7 @@ class LEJUKuavoEEPOSERos1Robot(Robot):  # 类名改为ROS1标识
         self.microphones = self.config.microphones
 
         self.follower_motors = config.follower_motors
+        self.actuators = config.actuators
         self.cameras = make_cameras_from_configs(self.config.cameras)
         
         self.connect_excluded_cameras = ["image_pika_pose"]
@@ -60,7 +61,11 @@ class LEJUKuavoEEPOSERos1Robot(Robot):  # 类名改为ROS1标识
         self.connected = False
         self.logs = {}
         self._last_valid_follower: dict[str, np.ndarray] = {}
-        self.required_follower_keys = ["right_arm", "left_arm", "head"]
+        self.required_follower_keys = ["right_arm", "left_arm"]
+
+    @property
+    def _actuator_ft(self) -> dict[str, type]:
+        return {f"leader_{actuator}.pos": float for actuator in self.actuators}
 
     @property
     def _follower_motors_ft(self) -> dict[str, type]:
@@ -91,7 +96,7 @@ class LEJUKuavoEEPOSERos1Robot(Robot):  # 类名改为ROS1标识
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return self._follower_motors_ft
+        return self._actuator_ft
     
     @property
     def is_connected(self) -> bool:
@@ -348,13 +353,22 @@ class LEJUKuavoEEPOSERos1Robot(Robot):  # 类名改为ROS1标识
    
     
 
-    def send_action(self, action: dict[str, Any]):
-        """The provided action is expected to be a vector."""
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "LEJUKuavo is not connected. You need to run `robot.connect()`."
-            )
-        expected_action_keys = [
+    def _to_float(self, value: Any, default: float = 0.0) -> float:
+        if value is None:
+            return default
+        if hasattr(value, "item"):
+            value = value.item()
+        return float(value)
+
+    def _build_action_vector(self, action: dict[str, Any]) -> np.ndarray:
+        # 优先使用星海图同风格的 leader_* 输入
+        leader_keys = [f"leader_{actuator}.pos" for actuator in self.actuators]
+        if all(key in action for key in leader_keys):
+            values = [self._to_float(action[key]) for key in leader_keys]
+            return np.array(values, dtype=np.float32)
+
+        # 兼容旧版 follower_* 输入，映射为26维 eepose 向量
+        legacy_keys = [
             "follower_left_joint_0.pos",
             "follower_left_joint_1.pos",
             "follower_left_joint_2.pos",
@@ -362,12 +376,6 @@ class LEJUKuavoEEPOSERos1Robot(Robot):  # 类名改为ROS1标识
             "follower_left_joint_4.pos",
             "follower_left_joint_5.pos",
             "follower_left_joint_6.pos",
-            "follower_l_thumb.pos",
-            "follower_l_thumb_aux.pos",
-            "follower_l_index.pos",
-            "follower_l_middle.pos",
-            "follower_l_ring.pos",
-            "follower_l_pinky.pos",
             "follower_right_joint_0.pos",
             "follower_right_joint_1.pos",
             "follower_right_joint_2.pos",
@@ -375,30 +383,35 @@ class LEJUKuavoEEPOSERos1Robot(Robot):  # 类名改为ROS1标识
             "follower_right_joint_4.pos",
             "follower_right_joint_5.pos",
             "follower_right_joint_6.pos",
+            "follower_l_thumb.pos",
+            "follower_l_thumb_aux.pos",
+            "follower_l_index.pos",
+            "follower_l_middle.pos",
+            "follower_l_ring.pos",
+            "follower_l_pinky.pos",
             "follower_r_thumb.pos",
             "follower_r_thumb_aux.pos",
             "follower_r_index.pos",
             "follower_r_middle.pos",
             "follower_r_ring.pos",
             "follower_r_pinky.pos",
-            "follower_head_yaw.pos",
-            "follower_head_pitch.pos",
         ]
+        values = [self._to_float(action.get(key, 0.0)) for key in legacy_keys]
+        return np.array(values, dtype=np.float32)
 
-        goal_joint = []
-        for key in expected_action_keys:
-            val = action.get(key, 0.0)
-            if hasattr(val, "item"):
-                val = val.item()
-            goal_joint.append(float(val))
-        goal_joint_numpy = np.array(goal_joint, dtype=np.float32)
+    def send_action(self, action: dict[str, Any]):
+        """The provided action is expected to be an eepose vector."""
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                "LEJUKuavo is not connected. You need to run `robot.connect()`."
+            )
+
+        goal_joint_numpy = self._build_action_vector(action)
         try:
-            if goal_joint_numpy.shape != (28,):
-                raise ValueError(f"Action vector must be 28-dimensional, got {goal_joint_numpy.shape[0]}")
-            
-            # 调用ROS1节点的ros_replay方法发布动作（替换ROS2节点）
+            if goal_joint_numpy.shape != (26,):
+                raise ValueError(f"Action vector must be 26-dimensional, got {goal_joint_numpy.shape[0]}")
+
             self.robot_ros1_node.ros_replay(goal_joint_numpy)
-            
         except Exception as e:
             logger.error(f"Failed to send action: {e}")
             raise
