@@ -1,10 +1,9 @@
 import threading
+import time
 
 from typing import List, Optional
 
-import rclpy
-from rclpy.node import Node
-from rclpy.executors import Executor, MultiThreadedExecutor
+import rospy
 
 import logging_mp
 
@@ -13,96 +12,90 @@ logger = logging_mp.get_logger(__name__)
 
 class ROS2_NodeManager():
     def __init__(self):
-        """初始化ROS2节点管理器"""
+        """初始化 ROS1 节点管理器（保留历史类名以兼容旧代码）"""
         self._lock = threading.Lock()
-        self._nodes: List[Node] = []
-        self._executor: Optional[Executor] = None
+        self._nodes: List[object] = []
         self._spin_thread: Optional[threading.Thread] = None
         self.running = False
         self._initialized = False
 
-        self._init_ros2()
+        self._init_ros1()
 
         self._initialized = True
 
-    def _init_ros2(self):
-        """初始化ROS2（线程安全）"""
+    def _init_ros1(self):
+        """初始化 ROS1（线程安全）"""
         with self._lock:
             if not self._initialized:
-                rclpy.init()
-                self._executor = MultiThreadedExecutor()
+                if not rospy.core.is_initialized():
+                    rospy.init_node("roboautotask_node_manager", anonymous=True, disable_signals=True)
                 self._initialized = True
-                logger.info("[ROS2] ROS2 initialized")
+                logger.info("[ROS1] rospy initialized")
 
-    def add_node(self, node: Node):
-        """添加节点到管理器
-        
-        Args:
-            node: ROS2节点实例
-        """
-        self._init_ros2()  # 确保ROS2已初始化
+    def _node_name(self, node: object) -> str:
+        for attr in ("get_name", "name", "node_name"):
+            if hasattr(node, attr):
+                value = getattr(node, attr)
+                try:
+                    return value() if callable(value) else str(value)
+                except Exception:
+                    continue
+        return node.__class__.__name__
+
+    def add_node(self, node: object):
+        """添加节点/对象到管理器（ROS1下主要用于统一生命周期管理）"""
+        self._init_ros1()
         
         with self._lock:
             if node not in self._nodes:
                 self._nodes.append(node)
-                if self._executor is not None:
-                    self._executor.add_node(node)
-                logger.info(f"[ROS2] Node '{node.get_name()}' added")
+                logger.info(f"[ROS1] Node '{self._node_name(node)}' added")
 
-    def remove_node(self, node: Node):
-        """从管理器移除节点
-        
-        Args:
-            node: 要移除的节点
-        """
+    def remove_node(self, node: object):
+        """从管理器移除节点/对象"""
         with self._lock:
             if node in self._nodes:
-                if self._executor is not None:
-                    self._executor.remove_node(node)
                 self._nodes.remove(node)
-                node.destroy_node()
-                logger.info(f"[ROS2] Node '{node.get_name()}' removed")
+                if hasattr(node, "destroy_node"):
+                    try:
+                        node.destroy_node()
+                    except Exception as e:
+                        logger.warning(f"[ROS1] destroy_node failed: {e}")
+                elif hasattr(node, "destroy"):
+                    try:
+                        node.destroy()
+                    except Exception as e:
+                        logger.warning(f"[ROS1] destroy failed: {e}")
+                logger.info(f"[ROS1] Node '{self._node_name(node)}' removed")
 
-    def create_node(self, node_name: str, **kwargs) -> Node:
-        """创建并添加一个新节点
-        
-        Args:
-            node_name: 节点名称
-            **kwargs: 传递给节点的其他参数
-            
-        Returns:
-            创建的节点实例
-        """
-        self._init_ros2()
-        
-        node = rclpy.create_node(node_name, **kwargs)
-        self.add_node(node)
-        return node
+    def create_node(self, node_name: str, **kwargs):
+        """ROS1 下不提供动态创建 Node API，保留接口兼容。"""
+        raise NotImplementedError("ROS1 mode does not support create_node in this manager")
 
     def start(self):
-        """启动ROS2 spin线程"""
+        """启动 ROS1 管理线程（ROS1 回调由 rospy 内部线程处理）"""
         if self.running:
-            logger.warning("[ROS2] Already running")
+            logger.warning("[ROS1] Already running")
             return
 
         if not self._initialized:
-            self._init_ros2()
+            self._init_ros1()
 
         if not self._nodes:
-            logger.warning("[ROS2] No nodes to spin")
+            logger.warning("[ROS1] No nodes registered")
 
         self.running = True
         self._spin_thread = threading.Thread(target=self._spin_loop, daemon=True)
         self._spin_thread.start()
-        logger.info("[ROS2] Spin thread started")
+        logger.info("[ROS1] Manager loop started")
 
     def _spin_loop(self):
-        """独立线程执行ROS2 spin"""
+        """独立线程维持运行状态（ROS1 无需显式 spin_once）"""
         try:
-            while self.running and self._executor is not None and rclpy.ok():
-                self._executor.spin_once(timeout_sec=0.01)
+            while self.running and (not rospy.is_shutdown()):
+                time.sleep(0.01)
         except Exception as e:
-            logger.error(f"[ROS2] Spin error: {e}")
+            logger.error(f"[ROS1] Loop error: {e}")
         finally:
             self._cleanup()
 
@@ -112,17 +105,15 @@ class ROS2_NodeManager():
             # 移除所有节点
             for node in self._nodes[:]:  # 使用副本遍历
                 self.remove_node(node)
-            
-            # 关闭ROS2
-            if self._initialized:
-                rclpy.shutdown()
-                self._initialized = False
+
+            # 不主动 shutdown ROS1，避免误关同进程其他组件
+            self._initialized = rospy.core.is_initialized()
             
             self.running = False
-            logger.info("[ROS2] Cleanup completed")
+            logger.info("[ROS1] Cleanup completed")
 
     def stop(self):
-        """停止ROS2管理器"""
+        """停止管理器"""
         if not self.running:
             return
 
@@ -132,11 +123,11 @@ class ROS2_NodeManager():
         if self._spin_thread is not None:
             self._spin_thread.join(timeout=2.0)
             if self._spin_thread.is_alive():
-                logger.warning("[ROS2] Spin thread did not exit cleanly")
+                logger.warning("[ROS1] Manager loop did not exit cleanly")
 
-        logger.info("[ROS2] Node manager stopped")
+        logger.info("[ROS1] Node manager stopped")
 
-    def get_nodes(self) -> List[Node]:
+    def get_nodes(self) -> List[object]:
         """获取所有节点列表"""
         with self._lock:
             return self._nodes.copy()
@@ -145,3 +136,8 @@ class ROS2_NodeManager():
         """析构函数，确保资源清理"""
         if self.running:
             self.stop()
+
+
+class ROS1_NodeManager(ROS2_NodeManager):
+    """ROS1 别名类，便于新代码使用。"""
+    pass
